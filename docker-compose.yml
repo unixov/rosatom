@@ -1,0 +1,90 @@
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  mcp_server:
+    build:
+      context: ./mcp_server
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8001
+    volumes:
+      - job_data:/data
+      - mcp_tmp:/tmp
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8001), timeout=2).close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MCP_SERVER_URL: http://mcp_server:8001
+      MCP_PATH: /mcp
+      MODEL_STORAGE_DIR: /data/models
+      OUTPUT_STORAGE_DIR: /data/output
+      CORS_ORIGINS: http://localhost:5173
+    volumes:
+      - job_data:/data
+      - mcp_tmp:/tmp
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      mcp_server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./orchestrator
+    command: ["celery", "-A", "celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MCP_SERVER_URL: http://mcp_server:8001
+      MCP_PATH: /mcp
+      MODEL_STORAGE_DIR: /data/models
+      OUTPUT_STORAGE_DIR: /data/output
+    volumes:
+      - job_data:/data
+      - mcp_tmp:/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+      mcp_server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_PROXY_TARGET: http://orchestrator:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - orchestrator
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  job_data:
+  mcp_tmp:

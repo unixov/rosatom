@@ -8,6 +8,35 @@ from typing import Any
 
 DEFAULT_KNOWLEDGE_BASE: list[dict[str, Any]] = [
     {
+        "material": "PA12-CF",
+        "aliases": ["PA12-CF", "PA12 CF"],
+        "description": "PA12-CF — армированный углеволокном полиамид для прочных инженерных деталей.",
+        "parameters": {
+            "nozzle_temperature": 280,
+            "bed_temperature": 90,
+            "print_speed": 40,
+            "layer_height": 0.20,
+            "cooling": 20,
+            "supports": "auto",
+            "infill": 30,
+        },
+    },
+    {
+        "material": "PEEK",
+        "aliases": ["PEEK", "ПИК"],
+        "description": "PEEK — высокотемпературный инженерный полимер для специальных условий эксплуатации.",
+        "parameters": {
+            "nozzle_temperature": 395,
+            "bed_temperature": 140,
+            "print_speed": 25,
+            "layer_height": 0.20,
+            "cooling": 0,
+            "supports": "auto",
+            "infill": 30,
+            "enclosure_required": True,
+        },
+    },
+    {
         "material": "PLA",
         "aliases": ["PLA", "ПЛА"],
         "description": (
@@ -113,6 +142,8 @@ def normalize_material(material: str | None) -> str:
         "ПЕТГ": "PETG",
         "АБС": "ABS",
         "ТПУ": "TPU",
+        "ПИК": "PEEK",
+        "PA12 CF": "PA12-CF",
     }
 
     return aliases.get(normalized, normalized)

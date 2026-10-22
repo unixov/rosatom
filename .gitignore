@@ -18,3 +18,7 @@ Desktop.ini
 .env.*.local
 *.pem
 *.key
+__pycache__/
+*.py[cod]
+node_modules/
+dist/
