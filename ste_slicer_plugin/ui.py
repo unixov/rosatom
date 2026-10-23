@@ -55,9 +55,10 @@ class _ChatWorker(QThread):
 
 
 class AssistantDialog(QDialog):
-    def __init__(self, client: OrchestratorClient) -> None:
+    def __init__(self, client: OrchestratorClient, scene_adapter: Any = None) -> None:
         super().__init__()
         self.client = client
+        self.scene_adapter = scene_adapter
         self.settings = client.settings
         self.job_id: str | None = None
         self.current_plan: dict[str, Any] = {}
@@ -74,6 +75,9 @@ class AssistantDialog(QDialog):
             "LLM configuration",
             QLabel("Настраивается на orchestrator через environment; ключ не хранится в плагине."),
         )
+        self.scene_status_label = QLabel(self._scene_status_text())
+        self.scene_status_label.setWordWrap(True)
+        settings_form.addRow("Scene API", self.scene_status_label)
         root.addLayout(settings_form)
 
         self.transcript = QTextEdit()
@@ -94,7 +98,7 @@ class AssistantDialog(QDialog):
         root.addLayout(choices)
         self.send_button = QPushButton("Отправить")
         self.send_button.clicked.connect(self._send)
-        self.file_button = QPushButton("Загрузить текущую сцену")
+        self.file_button = QPushButton("Выбрать модель")
         self.file_button.clicked.connect(self._upload)
         actions = QHBoxLayout()
         actions.addWidget(self.message_edit)
@@ -102,6 +106,17 @@ class AssistantDialog(QDialog):
         actions.addWidget(self.file_button)
         root.addLayout(actions)
         self._append("assistant", "Готов. Опишите задачу печати или загрузите 3D-модель.")
+
+    def _scene_status_text(self) -> str:
+        if self.scene_adapter is None:
+            return "Scene API не подключён: используется bridge workflow с выбором файла."
+        try:
+            status = self.scene_adapter.status()
+        except Exception as exc:  # pragma: no cover - host-specific path
+            return f"Scene API недоступен: {exc}"
+        if status.get("available"):
+            return "Scene API обнаружен; операции сцены требуют проверки на этой сборке."
+        return "Scene API не обнаружен; используется bridge workflow с выбором файла."
 
     def _sync_settings(self) -> None:
         self.settings.orchestrator_url = self.orchestrator_edit.text().strip()

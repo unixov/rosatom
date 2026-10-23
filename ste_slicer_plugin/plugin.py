@@ -107,6 +107,50 @@ class OrchestratorClient:
         return result
 
 
+class SceneAdapter:
+    """Small compatibility layer for optional Cura/STE scene APIs.
+
+    Host distributions expose different controller and scene objects. The
+    adapter reports capabilities and only performs operations when the host
+    explicitly provides the corresponding callable, avoiding fake success.
+    """
+
+    def __init__(self, application: Any = None) -> None:
+        self.application = application
+
+    def _controller(self) -> Any:
+        getter = getattr(self.application, "getController", None)
+        return getter() if callable(getter) else None
+
+    def _scene(self) -> Any:
+        controller = self._controller()
+        getter = getattr(controller, "getScene", None)
+        return getter() if callable(getter) else None
+
+    def capabilities(self) -> dict[str, bool]:
+        controller = self._controller()
+        scene = self._scene()
+        return {
+            "controller": controller is not None,
+            "scene": scene is not None,
+            "load_file": callable(getattr(controller, "readLocalFile", None)),
+            "root_nodes": callable(getattr(scene, "getRoot", None)),
+        }
+
+    def status(self) -> dict[str, Any]:
+        capabilities = self.capabilities()
+        return {
+            "available": capabilities["scene"],
+            "capabilities": capabilities,
+            "message": (
+                "Scene API detected. Host-specific load/orientation operations "
+                "must be validated by the target STE Slicer build."
+                if capabilities["scene"]
+                else "Target Slicer scene API is unavailable in this host."
+            ),
+        }
+
+
 class RosatomAssistantExtension(Extension):
     """Host adapter exposing the assistant in the STE Slicer extension menu."""
 
@@ -114,15 +158,16 @@ class RosatomAssistantExtension(Extension):
         super().__init__()
         self.settings = settings or PluginSettings()
         self.client = OrchestratorClient(self.settings)
+        self.host_application = Application.getInstance() if Application is not None else None
+        self.scene_adapter = SceneAdapter(self.host_application)
         self._chat_callback: Callable[[dict[str, Any]], None] | None = None
         self._register_host_action()
 
     def _register_host_action(self) -> None:
-        if Application is None:
+        if self.host_application is None:
             return
-        app = Application.getInstance()
-        if hasattr(app, "addMenuItem"):
-            app.addMenuItem("ROSATOM AI Assistant", self.show_chat)
+        if hasattr(self.host_application, "addMenuItem"):
+            self.host_application.addMenuItem("ROSATOM AI Assistant", self.show_chat)
 
     def show_chat(self) -> None:
         """Open the UI panel; the Qt implementation is injected by the host adapter."""
@@ -130,8 +175,12 @@ class RosatomAssistantExtension(Extension):
             from .ui import AssistantDialog
         except ImportError:
             return
-        dialog = AssistantDialog(self.client)
+        dialog = AssistantDialog(self.client, scene_adapter=self.scene_adapter)
         dialog.show()
+
+    def scene_status(self) -> dict[str, Any]:
+        """Return detected host capabilities for diagnostics and the UI."""
+        return self.scene_adapter.status()
 
     def send_chat(self, message: str, job_id: str | None = None, callback: Callable[[dict[str, Any]], None] | None = None) -> None:
         self._chat_callback = callback

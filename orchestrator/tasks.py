@@ -274,7 +274,7 @@ class MCPClient:
         The orchestrator keeps domain-level names for its pipeline stages, while
         this adapter translates them to the stable MCP-server contract.
         """
-        if tool_name == "analyze_geometry":
+        if tool_name in {"analyze_geometry", "analyze_stl_geometry"}:
             return await self._call_mcp_tool(
                 "analyze_stl_geometry",
                 {"file_path": payload["file_path"]},
@@ -288,14 +288,20 @@ class MCPClient:
 
         if tool_name == "generate_gcode":
             parameters = payload.get("parameters") or {}
+            layer_height = payload.get(
+                "layer_height",
+                parameters.get("layer_height", 0.2),
+            )
+            try:
+                normalized_layer_height = float(layer_height)
+            except (TypeError, ValueError):
+                normalized_layer_height = 0.2
             return await self._call_mcp_tool(
                 "generate_gcode",
                 {
                     "file_path": payload["file_path"],
                     "material": payload.get("material", "PLA"),
-                    "layer_height": float(
-                        parameters.get("layer_height", 0.2)
-                    ),
+                    "layer_height": normalized_layer_height,
                 },
             )
 

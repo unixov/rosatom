@@ -97,6 +97,8 @@ class ChatResponse(BaseModel):
     job_id: str | None = None
     actions: list[str] = Field(default_factory=list)
     plan: dict[str, Any] | None = None
+    planner_source: str = "local-demo-planner"
+    llm_configured: bool = False
 
 
 def serialize_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -546,6 +548,8 @@ async def chat(
                 job_id=request.job_id,
                 actions=["refresh_job"],
                 plan=plan,
+                planner_source=plan.get("source", "local-demo-planner") if plan else "unavailable",
+                llm_configured=bool(plan and plan.get("source") == "openai-compatible-llm"),
             )
 
     try:
@@ -566,6 +570,8 @@ async def chat(
             job_id=request.job_id,
             actions=["refresh_job"],
             plan=plan,
+            planner_source=plan.get("source", "local-demo-planner") if plan else "unavailable",
+            llm_configured=bool(plan and plan.get("source") == "openai-compatible-llm"),
         )
 
     if any(
@@ -591,7 +597,50 @@ async def chat(
         job_id=request.job_id,
         actions=["upload_model"],
         plan=plan,
+        planner_source=plan.get("source", "local-demo-planner") if plan else "unavailable",
+        llm_configured=bool(plan and plan.get("source") == "openai-compatible-llm"),
     )
+
+
+@app.post("/api/v1/chat/with-model", status_code=202)
+async def chat_with_model(
+    message: str = Form(...),
+    file: UploadFile = File(...),
+    material: str | None = Form(default=None),
+    quality: str = Form(default="standard"),
+    printer_id: str | None = Form(default=None),
+    start_print: bool = Form(default=False),
+) -> dict[str, Any]:
+    """Plan and queue one user request with its attached model."""
+    clean_message = message.strip()
+    if not clean_message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+    plan = await create_print_plan(
+        clean_message,
+        {"filename": file.filename or "model", "requested_material": material, "quality": quality},
+    )
+    selected_material = material or plan.get("material", "PLA")
+    selected_quality = quality or plan.get("profile", "standard")
+    metadata = json.dumps(
+        {"source": "chat_with_model", "request": clean_message, "plan": plan},
+        ensure_ascii=False,
+    )
+    job = await upload_model(
+        file=file,
+        material=selected_material,
+        printer_id=printer_id,
+        quality=selected_quality,
+        start_print=start_print,
+        parameters=json.dumps(plan.get("parameters", {})),
+        metadata=metadata,
+    )
+    return {
+        "message": "План сформирован и модель поставлена в очередь.",
+        "job": job,
+        "plan": plan,
+        "planner_source": plan.get("source", "local-demo-planner"),
+        "llm_configured": plan.get("source") == "openai-compatible-llm",
+    }
 
 
 @app.on_event("shutdown")
