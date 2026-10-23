@@ -29,6 +29,7 @@ from tasks import (
     create_job,
     store,
 )
+from llm import create_print_plan
 
 
 APP_NAME = os.getenv(
@@ -95,6 +96,7 @@ class ChatResponse(BaseModel):
     message: str
     job_id: str | None = None
     actions: list[str] = Field(default_factory=list)
+    plan: dict[str, Any] | None = None
 
 
 def serialize_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -248,6 +250,10 @@ async def upload_model(
     finally:
         await file.close()
 
+    submitted_plan = parsed_metadata.get("plan")
+    if not isinstance(submitted_plan, dict):
+        submitted_plan = {}
+
     options = {
         "material": material,
         "printer_id": printer_id,
@@ -255,6 +261,7 @@ async def upload_model(
         "start_print": start_print,
         "parameters": parsed_parameters,
         "metadata": parsed_metadata,
+        "plan": submitted_plan,
     }
 
     try:
@@ -471,6 +478,26 @@ async def download_gcode(
     )
 
 
+@app.get("/api/v1/jobs/{job_id}/project")
+async def download_project(job_id: str) -> FileResponse:
+    job = get_existing_job(job_id)
+    project_path = Path(job.get("result", {}).get("project_3mf_path", ""))
+    results_root = OUTPUT_STORAGE_DIR.parent / "results"
+    if not project_path.is_file() or not is_inside_directory(project_path, results_root):
+        raise HTTPException(status_code=404, detail="3MF project has not been generated yet.")
+    return FileResponse(path=project_path, filename="project.3mf", media_type="application/vnd.ms-package.3dmanufacturing-3dmodel+xml")
+
+
+@app.get("/api/v1/jobs/{job_id}/artifacts")
+async def download_artifacts(job_id: str) -> FileResponse:
+    job = get_existing_job(job_id)
+    bundle_path = Path(job.get("result", {}).get("artifact_bundle_path", ""))
+    results_root = OUTPUT_STORAGE_DIR.parent / "results"
+    if not bundle_path.is_file() or not is_inside_directory(bundle_path, results_root):
+        raise HTTPException(status_code=404, detail="Submission artifacts have not been generated yet.")
+    return FileResponse(path=bundle_path, filename=f"rosatom-{job_id}.zip", media_type="application/zip")
+
+
 @app.post(
     "/api/v1/chat",
     response_model=ChatResponse,
@@ -489,6 +516,22 @@ async def chat(
     if request.job_id:
         job = get_existing_job(request.job_id)
 
+        try:
+            plan = await create_print_plan(
+                request.message,
+                {
+                    "job_id": request.job_id,
+                    "filename": job.get("filename"),
+                    "geometry": job.get("result", {}).get("geometry", {}),
+                    "current_options": job.get("options", {}),
+                },
+            )
+        except Exception as exc:
+            plan = None
+            plan_error = f" Планировщик LLM недоступен: {exc}."
+        else:
+            plan_error = ""
+
         if any(
             word in message
             for word in ("статус", "status", "прогресс")
@@ -498,10 +541,32 @@ async def chat(
                     f"Задача {request.job_id}: "
                     f"{job['status']}, прогресс "
                     f"{job['progress']}%."
+                    f"{plan_error}"
                 ),
                 job_id=request.job_id,
                 actions=["refresh_job"],
+                plan=plan,
             )
+
+    try:
+        plan = await create_print_plan(request.message, {"job_id": request.job_id})
+    except Exception as exc:
+        plan = None
+        plan_error = f" Планировщик LLM недоступен: {exc}."
+    else:
+        plan_error = ""
+
+    if plan and any(word in message for word in ("режим", "материал", "профил", "ориент", "размест", "5d", "3d")):
+        return ChatResponse(
+            message=(
+                f"План печати: режим {plan['mode']}, материал {plan.get('material', 'auto')}, "
+                f"профиль {plan.get('profile', 'auto')}. {plan.get('reasoning', '')}"
+                f"{plan_error}"
+            ),
+            job_id=request.job_id,
+            actions=["refresh_job"],
+            plan=plan,
+        )
 
     if any(
         word in message
@@ -521,9 +586,11 @@ async def chat(
             "Загрузите STL, 3MF или OBJ-файл. "
             "После загрузки система проанализирует геометрию, "
             "подберет параметры, выберет принтер и сгенерирует G-code."
+            f"{plan_error}"
         ),
         job_id=request.job_id,
         actions=["upload_model"],
+        plan=plan,
     )
 
 

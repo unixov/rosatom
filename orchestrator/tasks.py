@@ -12,7 +12,9 @@ from typing import Any
 import httpx
 import redis
 
+from artifacts import create_submission_bundle
 from celery_app import celery_app
+from llm import create_print_plan
 from rag import recommend_parameters
 
 
@@ -609,6 +611,36 @@ async def _run_pipeline(job_id: str) -> dict[str, Any]:
         )
 
     mcp = MCPClient()
+    stored_plan = options.get("plan")
+    if isinstance(stored_plan, dict) and stored_plan:
+        plan = stored_plan
+    else:
+        plan = await create_print_plan(
+            str(options.get("metadata", {}).get("request", "Подготовь модель к печати.")),
+            {
+                "job_id": job_id,
+                "filename": job["filename"],
+                "requested_material": options.get("material"),
+                "quality": options.get("quality", "standard"),
+            },
+        )
+
+    plan_parameters = plan.get("parameters", {})
+    if not isinstance(plan_parameters, dict):
+        plan_parameters = {}
+    requested_parameters = options.get("parameters", {})
+    if not isinstance(requested_parameters, dict):
+        requested_parameters = {}
+    effective_parameters = {**plan_parameters, **requested_parameters}
+    effective_material = options.get("material") or plan.get("material") or "PLA"
+    requested_quality = options.get("quality") or plan.get("profile") or "standard"
+    quality_aliases = {"high-quality": "high", "fine": "high", "draft": "draft"}
+    effective_quality = quality_aliases.get(
+        str(requested_quality).lower(),
+        str(requested_quality).lower(),
+    )
+    if effective_quality not in {"draft", "standard", "high"}:
+        effective_quality = "standard"
 
     _start_step(
         job_id,
@@ -618,13 +650,8 @@ async def _run_pipeline(job_id: str) -> dict[str, Any]:
     )
 
     geometry_result = await mcp.call_tool(
-        "analyze_geometry",
-        {
-            "job_id": job_id,
-            "model_path": str(model_path),
-            "file_path": str(model_path),
-            "filename": job["filename"],
-        },
+        "analyze_stl_geometry",
+        {"file_path": str(model_path)},
     )
     if isinstance(geometry_result, dict) and geometry_result.get("error"):
         raise MCPClientError(str(geometry_result["error"]))
@@ -647,9 +674,9 @@ async def _run_pipeline(job_id: str) -> dict[str, Any]:
 
     recommendation = recommend_parameters(
         geometry=geometry,
-        material=options.get("material"),
-        quality=options.get("quality", "standard"),
-        overrides=options.get("parameters", {}),
+        material=effective_material,
+        quality=effective_quality,
+        overrides=effective_parameters,
     )
 
     _finish_step(
@@ -718,14 +745,9 @@ async def _run_pipeline(job_id: str) -> dict[str, Any]:
     slicing_result = await mcp.call_tool(
         "generate_gcode",
         {
-            "job_id": job_id,
-            "model_path": str(model_path),
             "file_path": str(model_path),
-            "output_path": str(expected_gcode_path),
-            "printer_id": selected_printer_id,
             "material": recommendation["material"],
-            "quality": recommendation["quality"],
-            "parameters": recommendation["parameters"],
+            "layer_height": float(recommendation["parameters"].get("layer_height", 0.2)),
         },
     )
 
@@ -791,11 +813,31 @@ async def _run_pipeline(job_id: str) -> dict[str, Any]:
             print_result,
         )
 
+    artifact_directory = OUTPUT_STORAGE_DIR.parent / "results" / job_id
+    artifact_paths = create_submission_bundle(
+        model_path=model_path,
+        gcode_path=gcode_path,
+        destination=artifact_directory,
+        job={
+            **job,
+            "status": "succeeded",
+            "result": {
+                "recommendation": recommendation,
+                "geometry": geometry_result,
+            },
+        },
+        plan=plan,
+    )
+
     result = {
         "geometry": geometry_result,
         "recommendation": recommendation,
+        "plan": plan,
         "printer": printer_result,
         "gcode_path": str(gcode_path),
+        "project_3mf_path": artifact_paths["project_3mf"],
+        "artifacts_directory": artifact_paths["directory"],
+        "artifact_bundle_path": artifact_paths["bundle"],
         "print": print_result,
     }
 

@@ -1,0 +1,22 @@
+{
+  "id": "RosatomAssistant",
+  "name": "ROSATOM AI Assistant",
+  "version": "1.0.0",
+  "description": "OpenAI-compatible planning assistant with orchestrator/MCP integration for STE Slicer and Cura 3.6-style hosts.",
+  "author": "ROSATOM AI Team",
+  "entry_point": "plugin.py",
+  "factory": "createExtension",
+  "api": "Cura 3.6 / STE Slicer prototype",
+  "license": "LGPL-3.0-or-later",
+  "runtime": {
+    "python": ">=3.10",
+    "qt": "PyQt5 or PyQt6"
+  },
+  "configuration": {
+    "orchestrator_url": "http://127.0.0.1:8000"
+  },
+  "notes": [
+    "The exact plugin loader and scene API must be validated against the target STE Slicer build.",
+    "LLM credentials stay in the orchestrator environment and are not included in this package."
+  ]
+}

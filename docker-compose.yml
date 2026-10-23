@@ -41,6 +41,10 @@ services:
       MODEL_STORAGE_DIR: /data/models
       OUTPUT_STORAGE_DIR: /data/output
       CORS_ORIGINS: http://localhost:5173
+      LLM_API_URL: ${LLM_API_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
     volumes:
       - job_data:/data
       - mcp_tmp:/tmp
@@ -63,6 +67,10 @@ services:
       MCP_PATH: /mcp
       MODEL_STORAGE_DIR: /data/models
       OUTPUT_STORAGE_DIR: /data/output
+      LLM_API_URL: ${LLM_API_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
     volumes:
       - job_data:/data
       - mcp_tmp:/tmp
